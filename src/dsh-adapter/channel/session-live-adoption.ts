@@ -39,6 +39,7 @@ export function createLiveAgentAdoption(
     rowIds: { value: number }
     resetProjector(): void
     resetSubagents(): void
+    restoreSubagents(agent: Agent): void
     resetJobs(): void
     replay(events: readonly import('@deepseek-ai/dsh-session').SessionEvent[]): void
     settleReplay(): void
@@ -81,6 +82,7 @@ export function createLiveAgentAdoption(
       state.effortLevels = undefined
       state.reasoningEffort = undefined
       deps.replay(snapshotLiveSessionEvents(target.session))
+      deps.restoreSubagents(target)
       deps.settleReplay()
       state.working = target.status === 'running'
       // Reset the input FIFO and pending-decision indicators BEFORE the first

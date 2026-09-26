@@ -33,6 +33,7 @@ export function createBackgroundCurrentAction(
     rowIds: { value: number }
     resetProjector(): void
     resetSubagents(): void
+    parkSubagents(agent: AgentHandle['agent']): void
     resetJobs(): void
     refreshEffortLevels(): void
     bindAgent(): void
@@ -95,6 +96,7 @@ export function createBackgroundCurrentAction(
           const previousSessionId = String(previous.agent.session.id)
           if (previous.handle !== undefined) {
             deps.backgroundHandles.set(previousSessionId, previous.handle)
+            deps.parkSubagents(previous.agent)
             disposePrevious('park')
           }
           resetSessionProjection(state, deps.rowIds, deps.resetProjector, deps.resetSubagents, deps.resetJobs)

@@ -40,6 +40,10 @@ export function createSubagentProjection(
   const workflowMembers = new Map<string, string>()
   /** Children that earned a transcript card (live discovery only). */
   const cardedIds = new Set<string>()
+  // A parked parent keeps its live Agent handle in this process. Keep the
+  // transient run details against that handle while another session owns the
+  // channel; a WeakMap cannot retain disposed sessions indefinitely.
+  const parked = new WeakMap<Agent, { states: SubagentState[]; cardedIds: Set<string> }>()
   let streamDirty = false
 
   const syncRows = (snapshot: readonly SubagentState[] = store.snapshot()): void => {
@@ -205,6 +209,31 @@ export function createSubagentProjection(
     } catch { /* bootstrap is best-effort discovery; live events remain authoritative */ }
     syncNow()
   }
+  const park = (agent: Agent): void => {
+    parked.set(agent, { states: store.snapshot(), cardedIds: new Set(cardedIds) })
+  }
+  const restore = (agent: Agent): void => {
+    const previous = parked.get(agent)
+    if (previous === undefined) return
+    parked.delete(agent)
+    for (const saved of previous.states) {
+      let child: ReturnType<typeof deps.lookupChild> | undefined
+      try { child = deps.lookupChild(saved.agentId) } catch { child = undefined }
+      const running = child?.status === 'running'
+      // The old run may have ended while the parent was parked. Only carry
+      // its live timing/output forward while the registry still owns a
+      // running child. In every other case the durable fold's status wins.
+      if (!running || (saved.status !== 'running' && saved.status !== 'starting')) continue
+      if (!store.has(saved.agentId)) store.onDiscovered(saved.agentId, {
+        label: saved.description, childCreatedAt: saved.startedAt, live: true,
+        provider: saved.provider, model: saved.model,
+      })
+      store.patch(saved.agentId, { ...saved, status: 'running' })
+      if (child?.session) store.linkSession(saved.agentId, child.session)
+      if (previous.cardedIds.has(saved.agentId)) cardedIds.add(saved.agentId)
+    }
+    syncNow()
+  }
   const onStart = (info: { id: string; runId?: string; provider: string; local?: boolean }): void => {
     if (!info?.id) return
     // The fact that the host spawned a child is authoritative even when its
@@ -265,5 +294,5 @@ export function createSubagentProjection(
   }
   const dropRows = (): void => { streamDirty = false; rowsByAgentId.clear() }
   const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; store.reset(); getState().subagents = [] }
-  return { store, control, pendingTaskDescriptions, onSessionEvent, onStreamFrame, onParentEvent, bootstrapFromLog, onStart, onEnd, syncNow, flush, dropRows, reset }
+  return { store, control, pendingTaskDescriptions, onSessionEvent, onStreamFrame, onParentEvent, bootstrapFromLog, park, restore, onStart, onEnd, syncNow, flush, dropRows, reset }
 }

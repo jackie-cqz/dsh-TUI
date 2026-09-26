@@ -24,6 +24,10 @@
  *      dashboard row;
  *   E. workflow members — `tool-workflow/agent-start|end` parent events drive
  *      member rows (they never emit subagent edges) and settle by outcome.
+ *   F. parked live session — restoring the same child run keeps its clock,
+ *      tools, clickable card and event link; a new run still resets them;
+ *   G. list labels — an in-flight child is not reported as archived when the
+ *      service activity lags, and an idle/unknown child is not mislabeled.
  *
  * Run: node --import tsx/esm scripts/verify-subagent-panel-sync.tsx
  */
@@ -39,9 +43,10 @@ process.env.HOME = isolatedHome
 process.env.USERPROFILE = isolatedHome
 mkdirSync(joinPath(isolatedHome, '.dsh-tui'), { recursive: true })
 
-const [{ Context }, { createChannel }, { settled, sleep }] = await Promise.all([
+const [{ Context }, { createChannel }, { createSubagentProjection }, { settled, sleep }] = await Promise.all([
   import('@deepseek-ai/cordis'),
   import('../src/dsh-adapter/channel.js'),
+  import('../src/dsh-adapter/channel/subagent-projection.js'),
   import('./lib/term-test.mjs'),
 ])
 
@@ -80,7 +85,7 @@ function makeHarness(seedEvents: unknown[] = [], warmRegistry?: (registry: Map<s
   const emit = (name: string, ...args: unknown[]) =>
     (ctx as unknown as { emit(event: string, ...a: unknown[]): void }).emit(name, ...args)
   return {
-    registry, channel, emit,
+    ctx, registry, channel, emit,
     parentEvent: (event: unknown) => emit('session/event', parentSession, event),
     childEvent: (child: FakeChild, event: unknown) => emit('session/event', child.session, event),
     row: (agentId: string) => channel.rows.find(r => r.kind === 'subagent' && r.subagent?.agentId === agentId)?.subagent,
@@ -90,6 +95,27 @@ function makeHarness(seedEvents: unknown[] = [], warmRegistry?: (registry: Map<s
 
 const catalog = (childId: string, label: string, at: number) =>
   ({ type: 'subagent/catalog', seq: 0, time: at, data: { version: 0, childId, childCreatedAt: at, mode: 'continuable', label } })
+
+// The list service's activity can lag the live agent registry. A value other
+// than `running` must not be presented as proof that a child was archived.
+{
+  const h = makeHarness([catalog('list-child', '列表任务', Date.now() - 60_000)], registry => {
+    registry.set('list-child', { status: 'running', session: { id: 'list-child', seq: 0, events: [], header: {} } })
+  })
+  ;(h.ctx as unknown as { provide(name: string, value: unknown): void }).provide('subagents', {
+    listChildren: async () => [{ id: 'list-child', mode: 'continuable', activity: 'archived' }],
+  })
+  const liveLine = (await h.channel.listSubagents())[0] ?? ''
+  check('G1 列表以当前运行投影为准，不把在跑的子代理写成已归档',
+    liveLine.includes('运行中') && !liveLine.includes('已归档'), liveLine)
+
+  const unknown = makeHarness([catalog('idle-child-list', '历史任务', Date.now() - 60_000)])
+  ;(unknown.ctx as unknown as { provide(name: string, value: unknown): void }).provide('subagents', {
+    listChildren: async () => [{ id: 'idle-child-list', mode: 'continuable', activity: 'idle' }],
+  })
+  const unknownLine = (await unknown.channel.listSubagents())[0] ?? ''
+  check('G2 未知或空闲状态不误报已归档', unknownLine.includes('状态未知'), unknownLine)
+}
 
 // ── A + B: live lifecycle — catalog birth, epoch reset, late-end immunity ──
 {
@@ -216,6 +242,47 @@ const catalog = (childId: string, label: string, at: number) =>
   h.parentEvent({ type: 'tool-workflow/agent-end', seq: 10, time: Date.now(), data: { runId: 'wr-2', seq: 3, outcome: 'cancelled' } })
   check('E3 agent-end 按成员 seq 落地（cancelled）', h.panel('wf-live')?.status === 'cancelled',
     `status=${String(h.panel('wf-live')?.status)}`)
+}
+
+// ── F: /bg → live adoption keeps the same in-flight child run ──
+{
+  const parent = { id: 'parked-parent' } as never
+  const childSession = { id: 'parked-child' }
+  const child = { status: 'running', session: childSession, options: { model: 'model-00' } }
+  const state = { rows: [] as Array<{ kind: string; subagent?: { agentId: string; startedAt: number } }>, subagents: [] as Array<{ agentId: string; startedAt: number; status: string; toolCalls: unknown[]; output: string[] }>, emit() {}, emitStream() {} }
+  const projection = createSubagentProjection(() => state as never, {
+    rowIds: { value: 0 }, agent: () => parent,
+    subagents: () => undefined,
+    lookupChild: (id: string) => id === 'parked-child' ? child : undefined,
+  })
+  projection.onStart({ id: 'parked-child', runId: 'run-before-bg', provider: 'worker' })
+  const startedAt = Date.now() - 65_000
+  projection.store.patch('parked-child', { startedAt })
+  projection.onSessionEvent(childSession, { type: 'tool/call', data: { callId: 'before-bg', name: 'Grep', arguments: '{}' } })
+  projection.syncNow()
+  projection.park(parent)
+  state.rows.length = 0
+  projection.reset()
+  projection.bootstrapFromLog([catalog('parked-child', '长任务', startedAt)])
+  projection.restore(parent)
+  check('F1 回会话保留同一运行轮次、计时和工具记录',
+    state.subagents[0]?.startedAt === startedAt && state.subagents[0]?.toolCalls.length === 1 && state.subagents[0]?.status === 'running',
+    JSON.stringify(state.subagents.map(s => [s.startedAt, s.toolCalls.length, s.status])))
+  check('F2 回会话后卡片仍有面板对应状态',
+    state.rows.some(row => row.kind === 'subagent' && row.subagent?.agentId === 'parked-child') && state.subagents.some(s => s.agentId === 'parked-child'))
+  projection.onSessionEvent(childSession, { type: 'tool/call', data: { callId: 'after-bg', name: 'Read', arguments: '{}' } })
+  check('F3 回会话后子代理事件继续更新原卡片', state.subagents[0]?.toolCalls.length === 2)
+  await sleep(20)
+  projection.onStart({ id: 'parked-child', runId: 'run-after-bg', provider: 'worker' })
+  check('F4 真正的新轮次才重置计时和工具',
+    (state.subagents[0]?.startedAt ?? 0) > startedAt && state.subagents[0]?.toolCalls.length === 0)
+
+  projection.park(parent)
+  projection.reset()
+  child.status = 'idle'
+  projection.bootstrapFromLog([catalog('parked-child', '长任务', startedAt)])
+  projection.restore(parent)
+  check('F5 离开期间停止的子代理不沿用旧 running 状态', state.subagents[0]?.status === 'unknown')
 }
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} 项失败`)
