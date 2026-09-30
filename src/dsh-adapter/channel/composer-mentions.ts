@@ -1,5 +1,7 @@
 import { isAbsolute, join } from 'node:path'
 import { extractMentions } from '../../utils/mentions.js'
+import { adaptImageForAdmission, probeImageSize, withinDimensionLimits } from '../../utils/imageResize.js'
+import type { AdaptOutcome } from '../../utils/imageResize.js'
 import { COMPOSER_IMAGE_TOKEN } from './composer-images.js'
 import {
   MENTION_MAX_DIR_ENTRIES,
@@ -9,7 +11,7 @@ import {
   tryResolveMention,
 } from './mentions.js'
 import { basename } from './paths.js'
-import type { MentionAttachments, MentionExpansion, MentionFs, MentionImageBlock } from './types.js'
+import type { MentionAttachments, MentionExpansion, MentionFs, MentionImageBlock, MentionImageMediaType } from './types.js'
 
 /**
  * Expand a submitted text's `@` mentions (issue #15) into model-facing
@@ -33,6 +35,8 @@ export async function expandComposerMentions(
   const blocks: MentionExpansion['blocks'] = [{ type: 'text', text }]
   const attached: string[] = []
   const missing: string[] = []
+  const adjustedImages: MentionExpansion['adjustedImages'] = []
+  const animatedImagesRejected: string[] = []
   const mentions = extractMentions(text)
   let budget = MENTION_MAX_TOTAL_CHARS
   let imageCount = 0
@@ -124,25 +128,84 @@ export async function expandComposerMentions(
     if (info?.type === 'file') {
       if (imageType !== undefined && attachments !== undefined && fs.readBytes !== undefined) {
         const limits = attachments.imageLimits
-        if (!limits.mediaTypes.includes(imageType) || imageCount >= limits.maxImagesPerMessage) {
+        if (imageCount >= limits.maxImagesPerMessage) {
           missing.push(display)
           continue
         }
         try {
-          const data = await fs.readBytes(target, undefined, limits.maxImageBytes)
+          let data = await fs.readBytes(target, undefined, limits.maxImageBytes)
+          let mediaType: MentionImageMediaType = imageType
+          let adapted: Extract<AdaptOutcome, { kind: 'adapted' }> | undefined
+          const dimensionLimits = {
+            maxImageDimension: limits.maxImageDimension,
+            maxImagePixels: limits.maxImagePixels,
+          }
+          const canAdapt = Number.isFinite(dimensionLimits.maxImageDimension)
+            && Number.isFinite(dimensionLimits.maxImagePixels)
+          const probe = canAdapt ? probeImageSize(data) : null
+          const sourceAccepted = limits.mediaTypes.includes(mediaType)
+          const knownOversize = canAdapt && probe !== null && !withinDimensionLimits(probe, dimensionLimits)
+          if (canAdapt && (!sourceAccepted || probe === null || knownOversize)) {
+            const outcome = await adaptImageForAdmission(data, mediaType, dimensionLimits, limits.mediaTypes)
+            if (outcome.kind === 'adapted') {
+              mediaType = outcome.mediaType as MentionImageMediaType
+              data = outcome.data
+              adapted = outcome
+            } else if (outcome.kind === 'unavailable') {
+              if (outcome.reason === 'animated-unsupported') {
+                animatedImagesRejected.push(display)
+                continue
+              }
+              // Match the staging gate's sharp-less degradation: only an
+              // accepted source of unknown dimensions can go to the store.
+              if (!(outcome.reason === 'sharp-missing' && sourceAccepted && !knownOversize)) {
+                missing.push(display)
+                continue
+              }
+            }
+          }
+          if (!limits.mediaTypes.includes(mediaType) || data.byteLength > limits.maxImageBytes) {
+            missing.push(display)
+            continue
+          }
           if (imageBytes + data.byteLength > limits.maxMessageImageBytes) {
             missing.push(display)
             continue
           }
           const attachment = await attachments.saveImage({
             data,
-            mediaType: imageType,
+            mediaType,
             name: basename(target.displayPath),
           })
+          if (imageBytes + attachment.bytes > limits.maxMessageImageBytes) {
+            missing.push(display)
+            continue
+          }
           blocks.push({ type: 'image', attachment })
           imageCount += 1
-          imageBytes += data.byteLength
+          imageBytes += attachment.bytes
           attached.push(display)
+          const width = typeof attachment.width === 'number' && attachment.width > 0
+            ? attachment.width : adapted?.width ?? probe?.width
+          const height = typeof attachment.height === 'number' && attachment.height > 0
+            ? attachment.height : adapted?.height ?? probe?.height
+          const resized = adapted?.resized === true
+            || (probe !== null && width !== undefined && height !== undefined
+              && (width !== probe.width || height !== probe.height))
+          if (width !== undefined && height !== undefined
+            && (adapted !== undefined || resized || attachment.mediaType !== imageType)) {
+            adjustedImages.push({
+              path: display,
+              adjustment: {
+                sourceMediaType: imageType,
+                mediaType: attachment.mediaType,
+                width,
+                height,
+                resized,
+                flattened: adapted?.flattened === true,
+              },
+            })
+          }
         } catch {
           missing.push(display)
         }
@@ -209,5 +272,5 @@ export async function expandComposerMentions(
     // Absent (stat → undefined) or a special file.
     missing.push(display)
   }
-  return { blocks, attached, missing }
+  return { blocks, attached, missing, adjustedImages, animatedImagesRejected }
 }

@@ -64,6 +64,7 @@ const GATES = [
   'verify:backdrop-dim',
   'verify:composer-image-tokens',
   'verify:image-downsample',
+  'verify:mention-image-admission',
   'verify:chat-overlay',
   'verify:i18n',
   'verify:approval-visibility',

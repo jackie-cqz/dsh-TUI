@@ -160,4 +160,8 @@ export interface MentionExpansion {
   attached: string[]
   /** Mention tokens that failed to resolve (kept literal, warned about). */
   missing: string[]
+  /** Image references adapted at ingress or normalized by the attachment store. */
+  adjustedImages: Array<{ path: string; adjustment: StagedImageAdjustment }>
+  /** A multi-frame image that cannot be adapted without losing its animation. */
+  animatedImagesRejected: string[]
 }

@@ -245,5 +245,5 @@ export async function expandMentions(
     // Absent (stat → undefined) or a special file.
     missing.push(display)
   }
-  return { blocks, attached, missing }
+  return { blocks, attached, missing, adjustedImages: [], animatedImagesRejected: [] }
 }

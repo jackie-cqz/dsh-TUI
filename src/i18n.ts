@@ -144,6 +144,8 @@ const dict = {
   'export-dir': { zh: '- 目录: {{cwd}}', en: '- Directory: {{cwd}}' },
   'mentions-attached': { zh: '已附加 {{count}} 个文件引用', en: { one: 'Attached {{count}} file reference', other: 'Attached {{count}} file references' } },
   'mentions-missing': { zh: '未找到引用: {{paths}}', en: 'References not found: {{paths}}' },
+  'mentions-image-adjusted': { zh: '已调整图片 {{path}}（{{detail}}）', en: 'Adjusted image {{path}} ({{detail}})' },
+  'mentions-image-animation-refused': { zh: '无法在保留动画的情况下调整图片：{{paths}}', en: 'Cannot adjust animated image without losing frames: {{paths}}' },
   // T06 (PR-B · AC-5): transcript indicator above a user bubble whose send
   // consumed the live IDE selection. The ⧉ glyph lives in MessageList, not here.
   'selection-attached': {

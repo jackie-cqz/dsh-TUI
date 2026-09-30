@@ -159,6 +159,7 @@ Type `@` at **any position** of the message to open file completion.
 - Path-shaped queries (`@src/`, `@./`, `@../`, `@~/`, `@D:\`, or anything containing a separator) read **only that directory** for local completion.
 - `Esc` closes only the current `@` token's menu; async refreshes keep your selected candidate.
 - Text files and directory listings are attached as text; PNG, JPEG, WebP, and GIF files are sent as durable Harness image blocks.
+- Image references use the same dimension and format adaptation as pasted images. The TUI reports any resize or conversion; an animated image that would lose its frames is refused with a warning.
 - Reads use the active workspace filesystem, including provider-owned workspaces.
 
 ### Pasted files and staged image tokens

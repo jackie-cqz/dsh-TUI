@@ -196,6 +196,32 @@ export function createInputDelivery(
     if (expansion.attached.length > 0) {
       notify(t('mentions-attached', { count: expansion.attached.length }), { timeoutMs: 2500 })
     }
+    for (const { path, adjustment } of expansion.adjustedImages) {
+      const details: string[] = []
+      if (adjustment.resized) {
+        details.push(t('input-image-detail-resized', {
+          width: adjustment.width,
+          height: adjustment.height,
+        }))
+      }
+      if (adjustment.mediaType !== adjustment.sourceMediaType) {
+        const from = adjustment.sourceMediaType.replace(/^image\//u, '').toUpperCase()
+        const to = adjustment.mediaType.replace(/^image\//u, '').toUpperCase()
+        details.push(t(adjustment.flattened
+          ? 'input-image-detail-converted-flattened'
+          : 'input-image-detail-converted', { from, to }))
+      }
+      if (details.length > 0) {
+        notify(t('mentions-image-adjusted', { path: formatMissingReference(path), detail: details.join(' · ') }), {
+          timeoutMs: 5000,
+        })
+      }
+    }
+    if (expansion.animatedImagesRejected.length > 0) {
+      notify(t('mentions-image-animation-refused', {
+        paths: expansion.animatedImagesRejected.map(formatMissingReference).join(' '),
+      }), { color: 'warning', timeoutMs: 5000 })
+    }
     if (expansion.missing.length > 0) {
       notify(t('mentions-missing', { paths: expansion.missing.map(formatMissingReference).join(' ') }), {
         color: 'warning',
