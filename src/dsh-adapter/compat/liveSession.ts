@@ -185,9 +185,9 @@ export interface LiveSessionSeedMetadata {
 
 /**
  * Create-time seed ownership fields. Every copied source prefix is inherited
- * state for domain projections, even when `/fork` deliberately omits
- * `parentSession` so the copy is presented as an independent root. The exact
- * cut distinguishes copied history from child-owned events. Not every
+ * state for domain projections. The exact cut distinguishes copied history
+ * from child-owned events; `/fork` also records `parentSession` so persisted
+ * delivery markers in the inherited prefix remain valid. Not every
  * projection skips inherited events: newer inbox folds restore pending input
  * from them, so rewind must cancel that work through the child's Inbox API.
  * A child snapshot length cannot reliably be used as the cut because

@@ -17,10 +17,10 @@
  * `fallbackMaxBytes`).
  *
  * A session with no human message has no conversation for the lineage to
- * describe, so its replacement stands as its own root — the same independent-
- * conversation choice `/fork` already makes (`session-fork.ts`), for the same
- * reason. The seeded prefix is unaffected either way: the child still inherits
- * the source's session scaffolding verbatim.
+ * describe, so its model-switch replacement stands as its own root. `/fork`
+ * always records lineage so copied delivery markers remain valid on restore.
+ * The seeded prefix is unaffected either way: the child still inherits the
+ * source's session scaffolding verbatim.
  *
  * @module
  */

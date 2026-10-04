@@ -757,6 +757,7 @@ Claude 后端的审批来自 CLI：CLI 给出建议时多一个「始终允许�
 - `/clear`、`/compact`、`/export`、`/btw`。
 - `/trace`：轨迹场景，亦可 `Ctrl+T`。
 - `/rewind`：时间回溯，同空输入双击 `Esc`。
+- `/fork`：把当前会话复制为同一家族中可恢复的分支，原会话不变；`/tree` 展示其血缘。
 
 **状态**
 

@@ -206,6 +206,8 @@ dsh-tui --backend claude     # 或在 /kernel 里选 Claude，选择会被记住
 
 `/resume` · `/home` · `/agentview` · `/bg` · `⌸` 打开同一个会话管理界面：工作区栏、实时状态、筛选、★ 固定。另有 `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/setup` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`。
 
+`/fork` 把当前会话复制为同一家族中可恢复的分支，原会话继续保持打开；`/tree` 展示家族历史。
+
 会话管理界面会立即显示上次成功读取的列表，同时核对持久化存储的变化。需要深度扫描日志的标题会先显示回退名称，恢复完成后在原行更新。
 移除工作区登记后，其历史会话仍可从侧栏的「仅历史」目录进入。
 「仅历史」目录只提供编辑和新建会话操作；重命名与移除仅适用于已登记工作区。
