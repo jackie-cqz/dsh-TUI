@@ -118,9 +118,9 @@ export function createAgentViewProjection(
     // owner. Revoke them so a retained Context cannot wake a dead projection.
     disposeStatus = ctx.on('agent/status', () => schedule())
     disposeCreated = ctx.on('agent/created', () => { notify() })
-    disposeDisposed = ctx.on('agent/disposed', ({ agent }: { agent: { id?: unknown } }) => {
-      folds.delete(String(agent.id ?? ''))
-      backgroundHandles.delete(String(agent.id ?? ''))
+    disposeDisposed = ctx.on('agent/disposed', ({ agent }: { agent: Agent }) => {
+      folds.delete(String(agent.id))
+      backgroundHandles.delete(String(agent.session.id))
       notify()
     })
     refreshPersisted()

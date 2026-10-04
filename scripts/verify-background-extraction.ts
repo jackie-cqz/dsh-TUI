@@ -48,12 +48,71 @@ assert.match(subagents, /streamDirty/u)
 assert.match(subagents, /emitStream/u, 'stream deltas remain frame batched')
 assert.match(subagents, /markChannelReadDirty/u, 'subagent rows retain read-view dirty marks')
 
-const fakeAgent = (id = 'main') => ({
+const fakeAgent = (id = 'main', sessionId = id) => ({
   id,
   status: 'idle',
-  session: { id, events: [], header: { createdAt: 0 } },
+  session: { id: sessionId, events: [], header: { createdAt: 0 } },
   followup() {}, steer() {}, cancel() {}, inbox: { remove: () => true }, ctx: { on: () => () => undefined },
 })
+
+// Disposal removes the session-keyed handle and the runtime-agent-keyed
+// fold independently, even when another session occupies the runtime ID.
+{
+  const owner = createChannelOwner()
+  const main = fakeAgent('main')
+  const titledAgent = (id: string, sessionId: string, title: () => string) => ({
+    ...fakeAgent(id, sessionId),
+    session: {
+      id: sessionId, header: { createdAt: 0 },
+      events: [
+        { type: 'user/message', time: 1, data: { content: 'prompt' } },
+        { type: 'session/title', time: 2, data: { get title() { return title() } } },
+      ],
+    },
+  })
+  const retiring = titledAgent('runtime-background', 'session-background', () => 'Retiring')
+  let unrelatedTitleReads = 0
+  const unrelated = titledAgent('session-background', 'runtime-background', () => {
+    unrelatedTitleReads += 1
+    return 'Unrelated'
+  })
+  const roster = new Map([[retiring.session.id, retiring], [unrelated.session.id, unrelated]])
+  const callbacks = new Map<string, (event: { agent: typeof retiring }) => void>()
+  const projection = createAgentViewProjection({
+    on(name: string, listener: (event: { agent: typeof retiring }) => void) {
+      callbacks.set(name, listener)
+      return () => callbacks.delete(name)
+    },
+    get(name: string) {
+      return name === 'agents' ? { list: () => [...roster.values()], get: (id: string) => roster.get(id) } : undefined
+    },
+  } as never, {
+    owner, binding: createChannelBinding(createDshSession({} as never, { agent: main as never, handle: undefined }), owner), cwd: () => '/tmp', provider: 'provider', model: 'model',
+    notify() {}, listPersisted: async () => [], createDetached: async () => { throw new Error('unused') },
+    sessionSwitchVetoed: async () => false, adoptLive: async () => ({ ok: true }), resumeInto: async () => ({ ok: true }),
+  })
+  let retiringDisposes = 0
+  let unrelatedDisposes = 0
+  const unrelatedHandle = { agent: unrelated, async dispose() { unrelatedDisposes += 1 } }
+  projection.backgroundHandles.set(retiring.session.id, { agent: retiring, async dispose() { retiringDisposes += 1 } } as never)
+  projection.backgroundHandles.set(unrelated.session.id, unrelatedHandle as never)
+  projection.start()
+  assert.deepEqual(projection.rows().map(row => row.title).sort(), ['Retiring', 'Unrelated'])
+  assert.equal(unrelatedTitleReads, 1, 'initial row construction folds the unrelated agent once')
+
+  roster.delete(retiring.session.id)
+  const replacement = titledAgent(retiring.id, 'replacement-session', () => 'Replacement')
+  roster.set(replacement.session.id, replacement)
+  callbacks.get('agent/disposed')!({ agent: retiring })
+  assert.equal(projection.backgroundHandles.has(retiring.session.id), false, 'disposed session loses its background handle')
+  assert.equal(projection.backgroundHandles.get(unrelated.session.id), unrelatedHandle, 'disposal preserves the unrelated session whose ID matches the runtime agent ID')
+  assert.equal(projection.rows().find(row => row.id === replacement.id)?.title, 'Replacement', 'disposal clears the runtime agent fold before that ID is reused')
+  assert.equal(unrelatedTitleReads, 1, 'disposal preserves the unrelated runtime agent fold whose ID matches the disposed session ID')
+  owner.dispose()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(retiringDisposes, 0, 'owner teardown does not retain the already disposed background handle')
+  assert.equal(unrelatedDisposes, 1, 'the unrelated background handle stays owner-owned')
+}
 
 // Retained registry callbacks after replacement or mount disposal cannot list,
 // notify, emit, or alter rows. The same attachment disposer is safely called
